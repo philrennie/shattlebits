@@ -283,26 +283,56 @@ function save(){if(S.mode!=="room"||!S.code)return;
 
 /* ---------- transport: Supabase Realtime presence, shaped like the Claude room ---------- */
 function sbRoom(client){
+  /* Phones freeze background pages, which leaves the socket looking open but dead.
+     So: re-track on every (re)join, check our own presence is really there, and tear
+     the whole connection down and rebuild it whenever the page wakes up or a send fails. */
   const me=randHex(8);
   return{async join(name){
-    const ch=client.channel(name,{config:{presence:{key:me}}});
-    let peersCb=null,connCb=null,cur=null,connected=false,settled=false;
-    const emitPeers=()=>{if(!peersCb)return;const st=ch.presenceState(),peers=[];
+    let ch=null,peersCb=null,connCb=null,cur=null,connected=false,left=false,rebuilding=false,hiddenAt=0;
+    const setConn=v=>{if(v!==connected){connected=v;connCb&&connCb(v)}};
+    const emitPeers=()=>{if(!peersCb||!ch)return;const st=ch.presenceState(),peers=[];
       for(const[k,metas]of Object.entries(st)){const m=metas[metas.length-1];if(m&&m.s)peers.push({sameTab:k===me,presence:m.s})}
       peersCb({peers})};
-    ch.on("presence",{event:"sync"},emitPeers);
-    await new Promise((res,rej)=>{
+    const sendTrack=async()=>{if(!ch||!cur||!connected)return;
+      let r;try{r=await ch.track({s:cur})}catch(e){r="error"}
+      if(r!=="ok")rebuild()};
+    const open=()=>new Promise((res,rej)=>{
+      let settled=false;const c=client.channel(name,{config:{presence:{key:me}}});ch=c;
+      c.on("presence",{event:"sync"},()=>{if(c===ch)emitPeers()});
       const t=setTimeout(()=>{if(!settled){settled=true;rej({code:"upstream_error"})}},12000);
-      ch.subscribe(st=>{
-        if(st==="SUBSCRIBED"){connected=true;connCb&&connCb(true);if(cur)ch.track({s:cur}).catch(()=>{});
-          if(!settled){settled=true;clearTimeout(t);res()}}
-        else if(st==="CHANNEL_ERROR"||st==="TIMED_OUT"||st==="CLOSED"){connected=false;connCb&&connCb(false);
-          if(!settled){settled=true;clearTimeout(t);rej({code:"upstream_error"})}}})});
+      c.subscribe(st=>{
+        if(c!==ch)return;
+        if(st==="SUBSCRIBED"){setConn(true);sendTrack();if(!settled){settled=true;clearTimeout(t);res()}}
+        else if(st==="CHANNEL_ERROR"||st==="TIMED_OUT"||st==="CLOSED"){setConn(false);
+          if(!settled){settled=true;clearTimeout(t);rej({code:"upstream_error"})}
+          else if(st!=="CLOSED")setTimeout(()=>{if(!connected)rebuild()},4000)}})});
+    async function rebuild(){
+      if(rebuilding||left)return;rebuilding=true;setConn(false);
+      const old=ch;ch=null;
+      try{if(old)await client.removeChannel(old)}catch(e){}
+      try{await client.realtime.disconnect()}catch(e){}
+      for(let wait=500;!left;wait=Math.min(wait*2,8000)){
+        try{await open();break}catch(e){try{if(ch)await client.removeChannel(ch)}catch(x){}ch=null;await new Promise(r=>setTimeout(r,wait))}}
+      rebuilding=false;emitPeers()}
+    const onWake=()=>{if(left)return;
+      if(document.visibilityState==="hidden"){hiddenAt=Date.now();return}
+      if(hiddenAt&&Date.now()-hiddenAt>2000)rebuild();else sendTrack();hiddenAt=0};
+    const onOnline=()=>{if(!left)rebuild()};
+    const onShow=e=>{if(e.persisted&&!left)rebuild()};
+    document.addEventListener("visibilitychange",onWake);
+    window.addEventListener("online",onOnline);window.addEventListener("pageshow",onShow);
+    /* watchdog: our own presence must be visible to the server; if not, re-send or rebuild */
+    const dog=setInterval(()=>{if(left||rebuilding||document.visibilityState==="hidden")return;
+      if(!connected||!ch||ch.state!=="joined"){rebuild();return}
+      if(cur&&!(me in ch.presenceState()))sendTrack()},10000);
+    await open();
     return{
-      presence(s){cur=s;return connected?ch.track({s}).then(()=>{}):Promise.resolve()},
+      presence(s){cur=s;sendTrack();return Promise.resolve()},
       onPeers(cb){peersCb=cb;setTimeout(emitPeers,0);return()=>{}},
       onConnection(cb){connCb=cb;setTimeout(()=>cb(connected),0);return()=>{}},
-      async leave(){try{await ch.untrack()}catch(e){}try{client.removeChannel(ch)}catch(e){}}}}}}
+      async leave(){left=true;clearInterval(dog);
+        document.removeEventListener("visibilitychange",onWake);window.removeEventListener("online",onOnline);window.removeEventListener("pageshow",onShow);
+        try{if(ch)await ch.untrack()}catch(e){}try{if(ch)await client.removeChannel(ch)}catch(e){}ch=null}}}}}
 const pageLink=code=>location.origin+location.pathname+"#"+code;
 function setHash(code){try{history.replaceState(null,"",location.pathname+location.search+(code?"#"+code:""))}catch(e){}}
 
@@ -320,7 +350,7 @@ async function enterRoom(role,code,restore){
   else newGame(!S.commit);
   T={send:s=>{r.presence(s).catch(()=>{})}};
   r.onPeers(ch=>{const p=ch.peers.find(p=>!p.sameTab&&p.presence&&p.presence.app==="bs1"&&p.presence.role!==S.role);onOpp(p?p.presence:null,!!p)});
-  r.onConnection(c=>{S.link=c;renderLink()});
+  r.onConnection(c=>{S.link=c;render()});
   lastSent="";after();push(true)}
 function leave(){
   if(RT){RT.leave().catch(()=>{});RT=null}
@@ -430,7 +460,7 @@ function renderConn(){
 function renderLink(){
   const on=S.mode==="room"?(S.link&&S.oppOnline):S.link;
   $("#linkDot").classList.toggle("on",!!on);
-  $("#linkTxt").textContent=on?"Opponent online":S.conn==="room"?"Waiting for opponent":"Not connected"}
+  $("#linkTxt").textContent=on?"Opponent online":S.conn==="room"?(S.link?"Waiting for opponent":"Reconnecting…"):"Not connected"}
 
 function seg(f,k,i){const s=f[k],len=SHIPS[k][1],p=cellsOf(s,len).indexOf(i);
   return(s.h?" h":" v")+(p===0?" bow":"")+(p===len-1?" stern":"")}
@@ -465,6 +495,7 @@ function render(){
   else if(!d.resultsIn){big="Shot away";sub=`Fired at ${coord(S.shots[S.shots.length-1])}. Waiting for ${esc(on)} to call it…`}
   else{big=`${esc(on)}'s shot`;sub=S.shots.length===0&&d.oppShots.length===0?`${esc(on)} fires first this round.`:"Stand by."}
   if(!placing&&!d.over&&T&&!S.oppOnline&&d.o)sub+=` ${esc(on)} is offline right now.`;
+  if(S.conn==="room"&&!S.link)sub+=" Reconnecting…";
   $("#stBig").textContent=big.replace(/&#39;/g,"'").replace(/&amp;/g,"&");$("#stSub").innerHTML=sub;$("#stEnd").innerHTML=end;
 
   /* boards */
@@ -550,7 +581,7 @@ render();
     const g=load("bs1.game");if(r&&g&&g.code&&g.role)S.saved=g;render();
   }else if(window.supabase&&typeof window.supabase.createClient==="function"&&SUPABASE_URL&&!/^#join=/.test(location.hash)){
     let client=null;
-    try{client=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false}})}catch(e){}
+    try{client=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false},realtime:{heartbeatIntervalMs:15000}})}catch(e){}
     if(client){
       ROOM=sbRoom(client);S.mode="room";S.backend="sb";
       const g=load("bs1.game");if(g&&g.code&&g.role)S.saved=g;
