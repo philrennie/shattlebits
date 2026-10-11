@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Shattlebits</title>
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}*,*::before,*::after{box-sizing:border-box}</style>
 </head>
 <body>
-<title>Battleships</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@700;800&family=Archivo:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
@@ -111,6 +111,10 @@ figcaption b{font:700 18px/1 var(--display);letter-spacing:.06em;text-transform:
 .fleet li.down .pips i{background:var(--sunk)}
 .log{font:500 13px/1.6 var(--mono);margin:0;padding:0;list-style:none;color:var(--muted)}
 .log li:first-child{color:var(--ink)}
+footer{border-top:1px solid var(--rule);padding-top:12px;margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+footer p{margin:0;flex:1 1 220px;min-width:0}
+footer .hint{flex-basis:100%}
+@media (min-width:760px){.boards.spec{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .end{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .verify{font-size:13px;color:var(--muted)}
 .verify.bad{color:var(--hit)}
@@ -118,18 +122,18 @@ figcaption b{font:700 18px/1 var(--display);letter-spacing:.06em;text-transform:
 
 <div class="app">
   <header>
-    <h1>Battleships</h1>
+    <h1>Shattlebits</h1>
     <span class="tag link" id="linkTag"><span class="dot" id="linkDot"></span><span id="linkTxt">Offline</span></span>
   </header>
   <section id="conn"></section>
   <div class="status" id="status" aria-live="polite"><span class="big" id="stBig">Place your fleet</span><span class="sub" id="stSub"></span><span class="end" id="stEnd"></span></div>
   <div class="boards" id="boards">
     <figure id="tgtFig" hidden>
-      <figcaption><b>Enemy waters</b><span class="tag" id="tgtTally"></span></figcaption>
+      <figcaption><b id="tgtCap">Enemy waters</b><span class="tag" id="tgtTally"></span></figcaption>
       <div class="board" id="tgt" role="grid" aria-label="Enemy waters"></div>
     </figure>
     <figure id="ownFig">
-      <figcaption><b>Your fleet</b><span class="tag" id="ownTally"></span></figcaption>
+      <figcaption><b id="ownCap">Your fleet</b><span class="tag" id="ownTally"></span></figcaption>
       <div class="board" id="own" role="grid" aria-label="Your fleet"></div>
       <div id="placeTools" class="tools">
         <button class="btn" data-act="shuffle">Shuffle</button>
@@ -141,10 +145,11 @@ figcaption b{font:700 18px/1 var(--display);letter-spacing:.06em;text-transform:
     </figure>
   </div>
   <div class="fleets" id="fleets" hidden>
-    <div class="fleet"><h3>Enemy fleet</h3><ul id="enemyList"></ul></div>
-    <div class="fleet"><h3>Your fleet</h3><ul id="myList"></ul></div>
+    <div class="fleet"><h3 id="enemyH">Enemy fleet</h3><ul id="enemyList"></ul></div>
+    <div class="fleet"><h3 id="myH">Your fleet</h3><ul id="myList"></ul></div>
     <div class="fleet"><h3>Shot log</h3><ul class="log" id="log"></ul></div>
   </div>
+  <footer id="foot" hidden></footer>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
@@ -195,7 +200,8 @@ function randHex(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return[.
 const S={mode:null,conn:"idle",role:null,code:null,name:load("bs1.name")||"",
   round:0,fleet:randomFleet(),salt:null,commit:null,shots:[],reveal:null,
   oppCur:null,oppLatest:null,oppOnline:false,link:false,sel:null,verify:null,
-  err:"",invite:"",reply:"",inviteIn:"",saved:null};
+  err:"",invite:"",reply:"",inviteIn:"",saved:null,
+  pid:randHex(6),with:null,watchers:0,spec:{h:null,g:null,hOn:false,gOn:false},specNote:false};
 let T=null,ROOM=null,RT=null,PC=null,lastSent="";
 
 function newGame(keepFleet){
@@ -217,7 +223,9 @@ function derive(){
   const myTurn=playing&&resultsIn&&(iFirst?S.shots.length===oppShots.length:S.shots.length<oppShots.length);
   return{o,meReady,oppReady,iFirst,oppShots,mine,oAns,enemySunk,mySunk,over,playing,resultsIn,myTurn}}
 
-function myState(){const d=derive();return{app:"bs1",role:S.role,name:S.name.slice(0,24),round:S.round,
+function myState(){
+  if(S.role==="spectator")return{app:"bs1",role:"spectator",pid:S.pid,name:S.name.slice(0,24),round:0};
+  const d=derive();return{app:"bs1",role:S.role,pid:S.pid,with:S.role==="host"?S.with:null,name:S.name.slice(0,24),round:S.round,
   commit:S.commit,shots:S.shots,ans:d.mine.ans,sunk:d.mine.sunk,reveal:S.reveal}}
 function push(force){if(!T)return;const st=myState(),j=JSON.stringify(st);if(!force&&j===lastSent)return;lastSent=j;T.send(st)}
 
@@ -231,13 +239,36 @@ function sanitize(p){
   let reveal=null;
   if(p.reveal&&validFleet(p.reveal.fleet)&&typeof p.reveal.salt==="string")
     reveal={fleet:p.reveal.fleet.map(s=>({r:s.r,c:s.c,h:s.h})),salt:p.reveal.salt.slice(0,64)};
-  return{role:p.role==="host"?"host":"guest",name:String(p.name||"").slice(0,24),round,shots,ans,sunk,commit,reveal}}
+  const pid=typeof p.pid==="string"?p.pid.slice(0,32):"",withP=typeof p.with==="string"?p.with.slice(0,32):null;
+  return{role:p.role==="host"?"host":p.role==="spectator"?"spectator":"guest",pid,with:withP,name:String(p.name||"").slice(0,24),round,shots,ans,sunk,commit,reveal}}
 
-function onOpp(p,online){
+function onOpp(s,online){
   S.oppOnline=online;
-  if(p){const s=sanitize(p);if(s&&s.role!==S.role){S.oppLatest=s;if(s.round===S.round)S.oppCur=s}}
+  if(s){S.oppLatest=s;if(s.round===S.round)S.oppCur=s}
   after()}
+/* Seats: the host locks in the first guest it hears (its "with"). Any other guest
+   sees a "with" that isn't theirs and becomes a spectator. */
+function handlePeers(list){
+  const seen=new Set(),states=[];
+  for(const p of list){if(p.sameTab)continue;const s=sanitize(p.presence);
+    if(!s||!s.pid||s.pid===S.pid||seen.has(s.pid))continue;seen.add(s.pid);states.push(s)}
+  S.watchers=states.filter(s=>s.role==="spectator").length;
+  const host=states.find(s=>s.role==="host"),guests=states.filter(s=>s.role==="guest");
+  if(S.role==="host"){
+    if(!S.with&&guests.length)S.with=guests[0].pid;
+    const opp=guests.find(g=>g.pid===S.with);onOpp(opp||null,!!opp);return}
+  if(S.role==="guest"){
+    if(host&&host.with&&host.with!==S.pid){becomeSpectator();handlePeers(list);return}
+    onOpp(host||null,!!host);return}
+  if(S.role==="spectator"){
+    if(host)S.spec.h=host;
+    const g=guests.find(x=>S.spec.h&&x.pid===S.spec.h.with);if(g)S.spec.g=g;
+    S.spec.hOn=!!host;S.spec.gOn=!!g;after()}}
+function becomeSpectator(){
+  S.role="spectator";S.specNote=true;S.commit=null;S.salt=null;S.shots=[];S.reveal=null;S.sel=null;
+  S.oppCur=null;S.oppLatest=null;S.oppOnline=false;lastSent=""}
 function after(){
+  if(S.role==="spectator"){push();save();render();return}
   const d=derive();
   if(d.over&&!S.reveal&&S.salt)S.reveal={fleet:S.fleet,salt:S.salt};
   push();save();render();verify(d)}
@@ -257,7 +288,7 @@ async function verify(d){
 function flash(t){const n=$("#note");n.textContent=t;clearTimeout(flash.t);flash.t=setTimeout(()=>n.textContent="",2600)}
 function tryPlace(k,s){const f=S.fleet.slice();f[k]={r:s.r,c:s.c,h:s.h};if(validFleet(f)){S.fleet=f;return true}return false}
 function ownClick(i){
-  if(S.commit)return;const m=occ(S.fleet);
+  if(S.commit||S.role==="spectator")return;const m=occ(S.fleet);
   if(m.has(i)){const k=m.get(i);S.sel=S.sel===k?null:k}
   else if(S.sel!=null){const len=SHIPS[S.sel][1],h=S.fleet[S.sel].h;
     const ns={r:Math.floor(i/10),c:i%10,h};
@@ -273,13 +304,13 @@ function rotate(){
 async function ready(){
   if(S.commit||!validFleet(S.fleet))return;S.sel=null;S.salt=randHex(16);
   S.commit=await sha(JSON.stringify(S.fleet)+S.salt);after()}
-function fire(i){const d=derive();if(!d.myTurn||S.shots.includes(i))return;S.shots=[...S.shots,i];after()}
+function fire(i){if(S.role==="spectator")return;const d=derive();if(!d.myTurn||S.shots.includes(i))return;S.shots=[...S.shots,i];after()}
 function rematch(){
   const nr=S.oppLatest&&S.oppLatest.round>S.round?S.oppLatest.round:S.round+1;
   S.round=nr;S.fleet=randomFleet();S.salt=null;S.commit=null;S.shots=[];S.reveal=null;S.verify=null;S.sel=null;
   S.oppCur=S.oppLatest&&S.oppLatest.round===nr?S.oppLatest:null;after()}
 function save(){if(S.mode!=="room"||!S.code)return;
-  store("bs1.game",{code:S.code,role:S.role,round:S.round,fleet:S.fleet,salt:S.salt,commit:S.commit,shots:S.shots,reveal:S.reveal})}
+  store("bs1.game",{code:S.code,role:S.role,pid:S.pid,with:S.with,round:S.round,fleet:S.fleet,salt:S.salt,commit:S.commit,shots:S.shots,reveal:S.reveal})}
 
 /* ---------- transport: Supabase Realtime presence, shaped like the Claude room ---------- */
 function sbRoom(client){
@@ -355,17 +386,19 @@ async function enterRoom(role,code,restore){
   try{r=await ROOM.join("bs-"+code)}
   catch(e){S.conn="idle";S.err=e&&e.code==="not_permitted"?"Game rooms aren't available for your account on this page.":"Couldn't reach the game server. Check your connection and try again, or play by swapping codes instead.";render();return}
   RT=r;S.role=role;S.code=code;S.conn="room";if(S.backend==="sb")setHash(code);
+  S.spec={h:null,g:null,hOn:false,gOn:false};S.watchers=0;S.specNote=false;
   if(restore&&validFleet(restore.fleet)){Object.assign(S,{round:restore.round||0,fleet:restore.fleet,salt:restore.salt||null,
-    commit:restore.commit||null,shots:Array.isArray(restore.shots)?restore.shots:[],reveal:restore.reveal||null});S.oppCur=null;S.oppLatest=null;S.verify=null}
-  else newGame(!S.commit);
+    commit:restore.commit||null,shots:Array.isArray(restore.shots)?restore.shots:[],reveal:restore.reveal||null});S.oppCur=null;S.oppLatest=null;S.verify=null;
+    S.pid=typeof restore.pid==="string"&&restore.pid?restore.pid:randHex(6);S.with=typeof restore.with==="string"?restore.with:null}
+  else{newGame(!S.commit);S.pid=randHex(6);S.with=null}
   T={send:s=>{r.presence(s).catch(()=>{})}};
-  r.onPeers(ch=>{const p=ch.peers.find(p=>!p.sameTab&&p.presence&&p.presence.app==="bs1"&&p.presence.role!==S.role);onOpp(p?p.presence:null,!!p)});
+  r.onPeers(ch=>handlePeers(ch.peers));
   r.onConnection(c=>{S.link=c;render()});
   lastSent="";after();push(true)}
 function leave(){
   if(RT){RT.leave().catch(()=>{});RT=null}
   if(PC){try{PC.close()}catch(e){}PC=null}
-  T=null;S.conn="idle";S.role=null;S.code=null;S.link=false;S.oppOnline=false;S.invite=S.reply=S.inviteIn="";S.err="";
+  T=null;S.conn="idle";S.role=null;S.code=null;S.with=null;S.watchers=0;S.specNote=false;S.spec={h:null,g:null,hOn:false,gOn:false};S.link=false;S.oppOnline=false;S.invite=S.reply=S.inviteIn="";S.err="";
   store("bs1.game",null);S.saved=null;if(S.backend==="sb")setHash("");newGame(false);render()}
 
 /* ---------- transport: direct browser-to-browser ---------- */
@@ -388,7 +421,7 @@ function newPC(){const pc=new RTCPeerConnection(ICE);
 function wire(dc){
   dc.onopen=()=>{S.link=true;S.oppOnline=true;S.conn="live";S.err="";
     T={send:s=>{if(dc.readyState==="open")dc.send(JSON.stringify(s))}};lastSent="";push(true);render()};
-  dc.onmessage=e=>{let p;try{p=JSON.parse(e.data)}catch(x){return}onOpp(p,true)};
+  dc.onmessage=e=>{let p;try{p=JSON.parse(e.data)}catch(x){return}const s=sanitize(p);if(s&&s.role!==S.role&&s.role!=="spectator")onOpp(s,true)};
   dc.onclose=()=>{S.link=false;S.oppOnline=false;render()}}
 async function startHost(){
   S.err="";S.role="host";S.conn="host1";newGame(true);render();
@@ -427,11 +460,10 @@ function connHTML(){
   if(S.mode==="room"){
     if(S.conn==="opening")return`<div class="card"><p>Opening the game room…</p></div>`;
     if(S.conn==="room"){
-      if(S.oppOnline)return`<div class="card compact"><p>Playing <b>${esc(oppName())}</b> · game <b>${S.code.toUpperCase()}</b></p><button class="btn" data-act="leave">Leave game</button></div>`;
+      if(S.oppOnline||S.role==="spectator")return"";
       const sb=S.backend==="sb";
       return`<div class="card"><span class="step">Game code</span><div class="row"><span class="bigcode" id="codeOut">${S.code.toUpperCase()}</span>${sb?`<button class="btn pri" data-act="copyRoomLink">Copy invite link</button>`:""}<button class="btn" data-act="copycode">Copy code</button></div>
-        <p>${S.oppLatest?`${esc(oppName())} has left. The game picks up again when they reopen ${sb?"the link":"this page and join with the same code"}.`:sb?"Send the link to your opponent. Opening it drops them straight into this game.":"Send this code to your opponent. They open this same page, choose Join and type it in."}</p>
-        <div class="row"><button class="btn" data-act="leave">Leave game</button></div></div>`}
+        <p>${S.oppLatest?`${esc(oppName())} has left. The game picks up again when they reopen ${sb?"the link":"this page and join with the same code"}.`:sb?"Send the link to your opponent. Opening it drops them straight into this game.":"Send this code to your opponent. They open this same page, choose Join and type it in."}</p></div>`}
     return`<div class="card"><h2>Start a game</h2>${nameField()}
       <div class="row"><button class="btn pri" data-act="roomNew">New game</button><span class="hint">or join with a code</span>
       <input id="codeIn" maxlength="5" autocomplete="off" aria-label="Game code" placeholder="CODE"><button class="btn" data-act="roomJoin">Join</button></div>
@@ -456,18 +488,31 @@ function connHTML(){
         <textarea id="replyOut" readonly>${esc(S.reply)}</textarea>
         <div class="row"><button class="btn pri" data-act="copyReply">Copy reply</button><button class="btn" data-act="leave">Cancel</button></div>
         <p>The game connects as soon as the host pastes it.</p>${err}</div>`;
-      case"live":return S.link
-        ?`<div class="card compact"><p>Connected to <b>${esc(oppName())}</b></p><button class="btn" data-act="leave">Leave game</button></div>`
-        :`<div class="card"><p>The connection to ${esc(oppName())} dropped. Direct links can't reconnect on their own, so start a new game to keep playing.</p><div class="row"><button class="btn pri" data-act="leave">New game</button></div>${err}</div>`;
+      case"live":return S.link?"":`<div class="card"><p>The connection to ${esc(oppName())} dropped. Direct links can't reconnect on their own, so start a new game to keep playing.</p><div class="row"><button class="btn pri" data-act="leave">New game</button></div>${err}</div>`;
     }
     return`<div class="card"><h2>Play a friend</h2>
       <p>Your two browsers connect straight to each other, with no accounts and no game server. To link them, you swap two codes over any chat app: the host sends an invite, the guest sends a reply.</p>
       ${nameField()}<div class="row"><button class="btn pri" data-act="host">Host a game</button><button class="btn" data-act="join">Join a game</button></div>${err}</div>`}
   return""}
 function renderConn(){
-  const key=[S.mode,S.conn,S.err,S.oppOnline,S.link,S.code,!!S.saved,S.invite.length,S.reply.length,S.conn==="live"||S.conn==="room"?oppName():""].join("|");
-  if(key===connKey)return;connKey=key;$("#conn").innerHTML=connHTML()}
+  const key=[S.mode,S.conn,S.role,S.err,S.oppOnline,S.link,S.code,!!S.saved,S.invite.length,S.reply.length,S.conn==="live"||S.conn==="room"?oppName():""].join("|");
+  if(key===connKey)return;connKey=key;const h=connHTML();$("#conn").innerHTML=h;$("#conn").hidden=!h}
+let footKey="";
+function footHTML(){
+  const C=S.code?S.code.toUpperCase():"";
+  if(S.mode==="room"&&S.conn==="room"){
+    const w=S.watchers?` · ${S.watchers} watching`:"";let txt;
+    if(S.role==="spectator"){const H=S.spec.h,G=S.spec.g;
+      txt=`Watching <b>${esc(H&&H.name||"Host")}</b> vs <b>${esc(G&&G.name||"Guest")}</b> · game <b>${C}</b>${w}`}
+    else txt=S.oppLatest?`Playing <b>${esc(oppName())}</b> · game <b>${C}</b>${w}`:`Game <b>${C}</b>${w}`;
+    return`<p>${txt}</p><button class="btn" data-act="leave">${S.role==="spectator"?"Stop watching":"Leave game"}</button>`+
+      (S.specNote?`<p class="hint">This game already had two players, so you're watching.</p>`:"")}
+  if(S.mode==="rtc"&&S.conn==="live"&&S.link)return`<p>Connected to <b>${esc(oppName())}</b></p><button class="btn" data-act="leave">Leave game</button>`;
+  return""}
+function renderFoot(){const h=footHTML();if(h===footKey)return;footKey=h;$("#foot").innerHTML=h;$("#foot").hidden=!h}
 function renderLink(){
+  if(S.role==="spectator"){const on=S.link&&S.spec.hOn&&S.spec.gOn;$("#linkDot").classList.toggle("on",!!on);
+    $("#linkTxt").textContent=!S.link?"Reconnecting…":on?"Both players online":"Waiting for players";return}
   const on=S.mode==="room"?(S.link&&S.oppOnline):S.link;
   $("#linkDot").classList.toggle("on",!!on);
   $("#linkTxt").textContent=on?"Opponent online":S.conn==="room"?(S.link?"Waiting for opponent":"Reconnecting…"):"Not connected"}
@@ -486,7 +531,12 @@ function lastEvent(d){
   return seq}
 
 function render(){
-  const d=derive();renderConn();renderLink();
+  renderConn();renderLink();renderFoot();
+  $("#boards").classList.toggle("spec",S.role==="spectator");
+  if(S.role==="spectator"){renderSpectator();return}
+  const d=derive();
+  $("#tgtCap").textContent="Enemy waters";$("#ownCap").textContent="Your fleet";
+  $("#enemyH").textContent="Enemy fleet";$("#myH").textContent="Your fleet";
   const placing=!S.commit;
   /* status */
   const st=$("#status");st.className="status";let big,sub,end="";
@@ -549,6 +599,73 @@ function render(){
     const word=r=>r===undefined?"…":r==="m"?"miss":r==="h"?"hit":"sank the "+SHIPS[+r][0];
     const lines=seq.slice(-7).reverse().map(e=>`<li>${e.w==="me"?"You":esc(oppName())} → ${coord(e.cell)} · ${word(e.res)}</li>`);
     $("#log").innerHTML=lines.join("")||"<li>No shots yet</li>"}
+}
+
+
+/* ---------- spectator view: both boards from the outside ---------- */
+function specDerive(){
+  const H=S.spec.h,G0=S.spec.g,G=H&&G0&&G0.round===H.round?G0:null;
+  const ready=!!(H&&G&&H.commit&&G.commit),round=H?H.round:0,hFirst=round%2===0;
+  let hs=[],gs=[];
+  if(ready){hs=H.shots;gs=G.shots;
+    if(hFirst){hs=hs.slice(0,gs.length+1);gs=gs.slice(0,hs.length)}else{gs=gs.slice(0,hs.length+1);hs=hs.slice(0,gs.length)}}
+  const hRes=ready?G.ans.slice(0,hs.length):"",gRes=ready?H.ans.slice(0,gs.length):"";
+  const digits=a=>new Set([...a].filter(c=>/\d/.test(c)).map(Number));
+  const hSunk=digits(hRes),gSunk=digits(gRes);
+  const over=hSunk.size===5?"h":gSunk.size===5?"g":null;
+  const total=hs.length+gs.length,firstUp=total%2===0;
+  const shooter=(hFirst===firstUp)?"h":"g";
+  const lastShooter=total===0?null:(shooter==="h"?"g":"h");
+  const pending=lastShooter==="h"?hRes.length<hs.length:lastShooter==="g"?gRes.length<gs.length:false;
+  return{H,G,ready,hFirst,hs,gs,hRes,gRes,hSunk,gSunk,over,shooter,lastShooter,pending}}
+function watersHTML(shots,res,owner,sunkSet,over,lastCell){
+  const sunkCells=new Map();
+  if(owner)owner.sunk.forEach(([k,r,c,h])=>{if(sunkSet.has(k)){const f=[];f[k]={r,c,h:!!h};cellsOf(f[k],SHIPS[k][1]).forEach(x=>sunkCells.set(x,[f,k]))}});
+  const ghost=new Map();
+  if(over&&owner&&owner.reveal)owner.reveal.fleet.forEach((s,k)=>{if(!sunkSet.has(k))cellsOf(s,SHIPS[k][1]).forEach(x=>ghost.set(x,k))});
+  return boardHTML(i=>{
+    const k=shots.indexOf(i);let cls="cell",lbl=coord(i);
+    if(sunkCells.has(i)){const[f,s]=sunkCells.get(i);cls+=" sunkc"+seg(f,s,i)}
+    else if(ghost.has(i))cls+=" ghost"+seg(owner.reveal.fleet,ghost.get(i),i);
+    if(k>=0){const r=res[k];if(r===undefined){cls+=" pend";lbl+=", waiting"}else{cls+=r==="m"?" miss":" hit";lbl+=r==="m"?", miss":", hit"}}
+    if(lastCell===i)cls+=" last fresh";
+    return`<button class="${cls}" aria-label="${lbl}" disabled><span class="mk"></span></button>`})}
+function renderSpectator(){
+  const d=specDerive(),hn=(d.H&&d.H.name)||"Host",gn=(d.G&&d.G.name)||(S.spec.g&&S.spec.g.name)||"Guest";
+  const st=$("#status");st.className="status";let big,sub="";
+  if(!d.H){big="Watching";sub="Waiting for the host to come back online."}
+  else if(!d.G){big="Watching";sub=S.spec.g?"Waiting for the next round to start.":`Waiting for an opponent to join ${esc(hn)}.`}
+  else if(!d.ready){big="Watching";sub="The players are placing their fleets."}
+  else if(d.over){const w=d.over==="h"?hn:gn,l=d.over==="h"?gn:hn;st.classList.add("win");
+    big=`${w} wins`;sub=`${esc(w)} sank ${esc(l)}'s whole fleet. Both fleets are shown now.`}
+  else if(d.pending){const who=d.lastShooter==="h"?hn:gn,shots=d.lastShooter==="h"?d.hs:d.gs;
+    big="Shot away";sub=`${esc(who)} fired at ${coord(shots[shots.length-1])}.`}
+  else{const who=d.shooter==="h"?hn:gn;st.classList.add("turn");big=`${who}'s shot`;
+    sub=d.hs.length+d.gs.length===0?`${esc(who)} fires first.`:"Watching for the next shot."}
+  if(d.H&&S.spec.g&&(!S.spec.hOn||!S.spec.gOn)&&!d.over)sub+=` ${esc(!S.spec.hOn?hn:gn)} is offline right now.`;
+  if(!S.link)sub+=" Reconnecting…";
+  $("#stBig").textContent=big;$("#stSub").innerHTML=sub;$("#stEnd").innerHTML="";
+  const show=!!(d.ready);
+  $("#boards").classList.add("play");
+  $("#tgtFig").hidden=false;$("#ownFig").hidden=false;$("#fleets").hidden=!show;
+  $("#placeTools").hidden=$("#placeHint").hidden=true;$("#own").classList.remove("small");
+  $("#tgtCap").textContent=`${gn}'s waters`;$("#ownCap").textContent=`${hn}'s waters`;
+  /* the latest shot with a result */
+  const seq=[];for(let k=0;k<Math.max(d.hs.length,d.gs.length);k++){
+    for(const w of d.hFirst?["h","g"]:["g","h"]){
+      if(w==="h"&&k<d.hs.length)seq.push({w,cell:d.hs[k],res:d.hRes[k]});
+      if(w==="g"&&k<d.gs.length)seq.push({w,cell:d.gs[k],res:d.gRes[k]})}}
+  const last=[...seq].reverse().find(e=>e.res!==undefined);
+  $("#tgt").innerHTML=watersHTML(d.hs,d.hRes,d.G,d.hSunk,d.over,last&&last.w==="h"?last.cell:null);
+  $("#own").innerHTML=watersHTML(d.gs,d.gRes,d.H,d.gSunk,d.over,last&&last.w==="g"?last.cell:null);
+  $("#tgtTally").textContent=show?`${d.hs.length} shots · ${d.hSunk.size} sunk`:"";
+  $("#ownTally").textContent=show?`${d.gs.length} shots · ${d.gSunk.size} sunk`:"";
+  if(show){
+    $("#enemyH").textContent=`${gn}'s fleet`;$("#myH").textContent=`${hn}'s fleet`;
+    const list=set=>SHIPS.map(([n,l],k)=>`<li class="${set.has(k)?"down":""}"><span>${n}</span><span class="pips">${"<i></i>".repeat(l)}</span></li>`).join("");
+    $("#enemyList").innerHTML=list(d.hSunk);$("#myList").innerHTML=list(d.gSunk);
+    const word=r=>r===undefined?"…":r==="m"?"miss":r==="h"?"hit":"sank the "+SHIPS[+r][0];
+    $("#log").innerHTML=seq.slice(-7).reverse().map(e=>`<li>${esc(e.w==="h"?hn:gn)} → ${coord(e.cell)} · ${word(e.res)}</li>`).join("")||"<li>No shots yet</li>"}
 }
 
 /* ---------- events ---------- */
