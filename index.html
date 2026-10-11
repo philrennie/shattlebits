@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}*,*::before,*::after{box-sizing:border-box}</style>
+</head>
+<body>
+<title>Battleships</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@700;800&family=Archivo:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: a plotting table. Status strip on top, the board you act on is always the big one, the other rides beside or below. */
+:root{
+  --paper:#e6ecee; --panel:#f3f6f7; --ink:#13212a; --muted:#536673; --rule:#c2d0d6;
+  --sea:#cfe0e7; --grid:#a5bcc7; --hull:#3a4b56; --hit:#cc3a26; --sunk:#7e2b1f; --flag:#e3a21a; --flag-ink:#1d1504;
+  --display:"Big Shoulders Stencil Display", Impact, "Arial Narrow", sans-serif;
+  --body:"Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --paper:#0b1419; --panel:#101d25; --ink:#d8e5ea; --muted:#8aa0ab; --rule:#223540;
+  --sea:#11242f; --grid:#264150; --hull:#93a8b2; --hit:#ff5b44; --sunk:#b8442f; --flag:#f0b43a; --flag-ink:#1d1504; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --paper:#0b1419; --panel:#101d25; --ink:#d8e5ea; --muted:#8aa0ab; --rule:#223540;
+  --sea:#11242f; --grid:#264150; --hull:#93a8b2; --hit:#ff5b44; --sunk:#b8442f; --flag:#f0b43a; --flag-ink:#1d1504; color-scheme:dark}
+
+html,body{min-height:100%}
+body{background:var(--paper);color:var(--ink);font:400 15px/1.5 var(--body)}
+.app{max-width:860px;margin:0 auto;padding-inline:16px;padding-block:14px 40px;display:flex;flex-direction:column;gap:14px}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+h1{font:800 clamp(30px,8vw,44px)/1 var(--display);letter-spacing:.04em;margin:0;text-transform:uppercase}
+.tag{font:500 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.link{display:inline-flex;align-items:center;gap:6px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.dot.on{background:#2e9e5b}
+
+.card{background:var(--panel);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+.card h2{font:700 22px/1.1 var(--display);letter-spacing:.04em;text-transform:uppercase;margin:0}
+.card p{margin:0;color:var(--muted);max-width:62ch}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.step{font:500 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+label.fld{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+input,textarea{font:500 14px/1.4 var(--mono);color:var(--ink);background:var(--paper);border:1px solid var(--rule);border-radius:4px;padding:8px 10px}
+input:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--flag);outline-offset:2px}
+textarea{width:100%;min-height:76px;resize:vertical;word-break:break-all;font-size:12px}
+#codeIn{width:8ch;text-transform:uppercase;letter-spacing:.15em}
+.btn{font:600 14px/1 var(--body);padding:10px 14px;border-radius:4px;border:1px solid var(--ink);background:transparent;color:var(--ink);cursor:pointer}
+.btn.pri{background:var(--ink);color:var(--paper)}
+.btn.flag{background:var(--flag);border-color:var(--flag);color:var(--flag-ink)}
+.btn:disabled{opacity:.4;cursor:default}
+.bigcode{font:800 44px/1 var(--display);letter-spacing:.18em}
+.err{color:var(--hit);font-size:14px}
+.compact{flex-direction:row;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 14px}
+.compact p{color:var(--ink)}
+
+.status{display:flex;align-items:center;gap:14px;border-block:2px solid var(--ink);padding-block:10px;flex-wrap:wrap}
+.status .big{font:800 clamp(26px,7vw,36px)/1 var(--display);letter-spacing:.04em;text-transform:uppercase}
+.status .sub{color:var(--muted);flex:1 1 220px;min-width:0}
+.status.turn .big{background:var(--flag);color:var(--flag-ink);padding:4px 10px 2px;border-radius:3px}
+.status.win .big{color:#2e9e5b}.status.lose .big{color:var(--hit)}
+
+.boards{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;align-items:start}
+.boards.play{grid-template-columns:minmax(0,1fr)}
+@media (min-width:760px){.boards.play{grid-template-columns:minmax(0,460px) minmax(0,300px);justify-content:space-between}}
+figure{margin:0;display:flex;flex-direction:column;gap:8px;min-width:0}
+figcaption{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+figcaption b{font:700 18px/1 var(--display);letter-spacing:.06em;text-transform:uppercase}
+.board{width:100%;max-width:460px;display:grid;grid-template-columns:repeat(11,minmax(0,1fr));gap:1px;background:var(--grid);border:1px solid var(--grid)}
+.board.small{max-width:300px}
+.lab,.corner{background:var(--paper);display:grid;place-items:center;aspect-ratio:1;font:500 clamp(8px,2.3vw,12px)/1 var(--mono);color:var(--muted)}
+.cell{position:relative;aspect-ratio:1;background:var(--sea);border:0;padding:0;margin:0;cursor:default;display:block;width:100%}
+.cell.can{cursor:crosshair}
+.cell.can:hover{background:color-mix(in srgb,var(--flag) 30%,var(--sea))}
+.cell::before{content:"";position:absolute;pointer-events:none}
+.cell.ship::before,.cell.sunkc::before,.cell.ghost::before{background:var(--hull)}
+.cell.sunkc::before{background:var(--sunk)}
+.cell.ghost::before{opacity:.45}
+.cell.sel::before{background:var(--flag)}
+.cell.h::before{inset:16% -1px}
+.cell.v::before{inset:-1px 16%}
+.cell.h.bow::before{left:10%;border-radius:999px 0 0 999px}
+.cell.h.stern::before{right:14%;border-radius:0 6px 6px 0}
+.cell.v.bow::before{top:10%;border-radius:999px 999px 0 0}
+.cell.v.stern::before{bottom:14%;border-radius:0 0 6px 6px}
+.mk{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+.mk::after{content:"";display:block;border-radius:50%}
+.miss .mk::after{width:24%;height:24%;background:var(--ink);opacity:.45}
+.hit .mk::after{width:52%;height:52%;background:var(--hit);box-shadow:0 0 0 2px var(--sea)}
+.sunkc.hit .mk::after{box-shadow:none;background:var(--hit)}
+.pend .mk::after{width:46%;height:46%;border:2px solid var(--flag);animation:pulse 1s ease-in-out infinite}
+.last{outline:2px solid var(--flag);outline-offset:-2px;z-index:1}
+.fresh .mk::after{animation:plop .45s cubic-bezier(.2,1.6,.4,1)}
+@keyframes plop{from{transform:scale(0)}to{transform:scale(1)}}
+@keyframes pulse{50%{transform:scale(.7);opacity:.5}}
+@media (prefers-reduced-motion:reduce){.fresh .mk::after,.pend .mk::after{animation:none}}
+
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+.hint{font-size:13px;color:var(--muted);max-width:60ch;margin:0}
+#note{min-height:1.2em;font-size:13px;color:var(--hit);margin:0}
+
+.fleets{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px}
+.fleet h3{font:500 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.fleet ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:5px}
+.fleet li{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:14px}
+.fleet li.down span:first-child{text-decoration:line-through;color:var(--muted)}
+.pips{display:flex;gap:3px}
+.pips i{width:12px;height:12px;border-radius:2px;background:var(--hull)}
+.pips i.h{background:var(--hit)}
+.fleet li.down .pips i{background:var(--sunk)}
+.log{font:500 13px/1.6 var(--mono);margin:0;padding:0;list-style:none;color:var(--muted)}
+.log li:first-child{color:var(--ink)}
+.end{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.verify{font-size:13px;color:var(--muted)}
+.verify.bad{color:var(--hit)}
+</style>
+
+<div class="app">
+  <header>
+    <h1>Battleships</h1>
+    <span class="tag link" id="linkTag"><span class="dot" id="linkDot"></span><span id="linkTxt">Offline</span></span>
+  </header>
+  <section id="conn"></section>
+  <div class="status" id="status" aria-live="polite"><span class="big" id="stBig">Place your fleet</span><span class="sub" id="stSub"></span><span class="end" id="stEnd"></span></div>
+  <div class="boards" id="boards">
+    <figure id="tgtFig" hidden>
+      <figcaption><b>Enemy waters</b><span class="tag" id="tgtTally"></span></figcaption>
+      <div class="board" id="tgt" role="grid" aria-label="Enemy waters"></div>
+    </figure>
+    <figure id="ownFig">
+      <figcaption><b>Your fleet</b><span class="tag" id="ownTally"></span></figcaption>
+      <div class="board" id="own" role="grid" aria-label="Your fleet"></div>
+      <div id="placeTools" class="tools">
+        <button class="btn" data-act="shuffle">Shuffle</button>
+        <button class="btn" data-act="rotate" id="rotBtn">Rotate</button>
+        <button class="btn flag" data-act="ready">Ready</button>
+      </div>
+      <p class="hint" id="placeHint">Tap a ship to pick it up, then tap open water to move it there. Rotate turns the picked ship.</p>
+      <p id="note" aria-live="polite"></p>
+    </figure>
+  </div>
+  <div class="fleets" id="fleets" hidden>
+    <div class="fleet"><h3>Enemy fleet</h3><ul id="enemyList"></ul></div>
+    <div class="fleet"><h3>Your fleet</h3><ul id="myList"></ul></div>
+    <div class="fleet"><h3>Shot log</h3><ul class="log" id="log"></ul></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+<script>
+/* Supabase project used for online games. The publishable key is meant for browser code. */
+const SUPABASE_URL="https://lhngrzhfdvxsprukdvgy.supabase.co";
+const SUPABASE_KEY="sb_publishable_XXZ6T1t-Bg4ReMo8hcD3-A_tPPahQoJ";
+const $=s=>document.querySelector(s);
+const SHIPS=[["Carrier",5],["Battleship",4],["Cruiser",3],["Submarine",3],["Destroyer",2]];
+const ROWS="ABCDEFGHIJ";
+const coord=i=>ROWS[Math.floor(i/10)]+(i%10+1);
+const rnd=n=>Math.floor(Math.random()*n);
+const esc=t=>String(t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function load(k){try{const v=localStorage.getItem(k);return v?JSON.parse(v):null}catch(e){return null}}
+function store(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,JSON.stringify(v))}catch(e){}}
+
+/* ---------- fleet geometry ---------- */
+function cellsOf(s,len){const a=[];for(let k=0;k<len;k++)a.push(s.h?s.r*10+s.c+k:(s.r+k)*10+s.c);return a}
+function fits(s,len){return s.r>=0&&s.c>=0&&(s.h?(s.r<10&&s.c+len<=10):(s.c<10&&s.r+len<=10))}
+function validFleet(f){
+  if(!Array.isArray(f)||f.length!==5)return false;const seen=new Set();
+  for(let i=0;i<5;i++){const s=f[i],len=SHIPS[i][1];
+    if(!s||!Number.isInteger(s.r)||!Number.isInteger(s.c)||typeof s.h!=="boolean"||!fits(s,len))return false;
+    for(const x of cellsOf(s,len)){if(seen.has(x))return false;seen.add(x)}}
+  return true}
+function randomFleet(){
+  for(;;){const f=[],used=new Set();let ok=true;
+    for(const[,len]of SHIPS){let placed=false;
+      for(let t=0;t<300&&!placed;t++){const h=Math.random()<.5;const s={r:rnd(h?10:11-len),c:rnd(h?11-len:10),h};
+        const cs=cellsOf(s,len);if(cs.every(x=>!used.has(x))){cs.forEach(x=>used.add(x));f.push(s);placed=true}}
+      if(!placed){ok=false;break}}
+    if(ok)return f}}
+function occ(f){const m=new Map();f.forEach((s,i)=>cellsOf(s,SHIPS[i][1]).forEach(x=>m.set(x,i)));return m}
+/* answers: m = miss, h = hit, 0-4 = sank that ship */
+function evaluate(f,shots){
+  const m=occ(f),hits=[0,0,0,0,0],seen=new Set(),sunk=[];let ans="";
+  for(const x of shots){
+    if(seen.has(x)||!m.has(x)){seen.add(x);ans+="m";continue}
+    seen.add(x);const i=m.get(x);hits[i]++;
+    if(hits[i]===SHIPS[i][1]){ans+=String(i);sunk.push([i,f[i].r,f[i].c,f[i].h?1:0])}else ans+="h"}
+  return{ans,sunk,hits}}
+async function sha(t){
+  try{if(!crypto.subtle)return"nohash";const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(t));
+    return[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join("")}catch(e){return"nohash"}}
+function randHex(n){const a=new Uint8Array(n);crypto.getRandomValues(a);return[...a].map(x=>x.toString(16).padStart(2,"0")).join("")}
+
+/* ---------- state ---------- */
+const S={mode:null,conn:"idle",role:null,code:null,name:load("bs1.name")||"",
+  round:0,fleet:randomFleet(),salt:null,commit:null,shots:[],reveal:null,
+  oppCur:null,oppLatest:null,oppOnline:false,link:false,sel:null,verify:null,
+  err:"",invite:"",reply:"",inviteIn:"",saved:null};
+let T=null,ROOM=null,RT=null,PC=null,lastSent="";
+
+function newGame(keepFleet){
+  S.round=0;if(!keepFleet)S.fleet=randomFleet();S.salt=null;S.commit=null;S.shots=[];S.reveal=null;
+  S.oppCur=null;S.oppLatest=null;S.verify=null;S.sel=null;lastSent=""}
+
+function derive(){
+  const o=S.oppCur,meReady=!!S.commit,oppReady=!!(o&&o.commit);
+  const first=S.round%2?"guest":"host",iFirst=(S.role||"host")===first;
+  let oppShots=[];
+  if(meReady&&oppReady)oppShots=o.shots.slice(0,iFirst?S.shots.length:S.shots.length+1);
+  const mine=evaluate(S.fleet,oppShots);
+  const oAns=oppReady?o.ans.slice(0,S.shots.length):"";
+  const enemySunk=new Set([...oAns].filter(c=>/\d/.test(c)).map(Number));
+  const mySunk=new Set([...mine.ans].filter(c=>/\d/.test(c)).map(Number));
+  const over=enemySunk.size===5?"win":mySunk.size===5?"lose":null;
+  const playing=meReady&&oppReady&&!over;
+  const resultsIn=oAns.length===S.shots.length;
+  const myTurn=playing&&resultsIn&&(iFirst?S.shots.length===oppShots.length:S.shots.length<oppShots.length);
+  return{o,meReady,oppReady,iFirst,oppShots,mine,oAns,enemySunk,mySunk,over,playing,resultsIn,myTurn}}
+
+function myState(){const d=derive();return{app:"bs1",role:S.role,name:S.name.slice(0,24),round:S.round,
+  commit:S.commit,shots:S.shots,ans:d.mine.ans,sunk:d.mine.sunk,reveal:S.reveal}}
+function push(force){if(!T)return;const st=myState(),j=JSON.stringify(st);if(!force&&j===lastSent)return;lastSent=j;T.send(st)}
+
+function sanitize(p){
+  if(!p||p.app!=="bs1")return null;
+  const round=Number.isInteger(p.round)&&p.round>=0?p.round:0;
+  const shots=Array.isArray(p.shots)?p.shots.filter(x=>Number.isInteger(x)&&x>=0&&x<100).slice(0,100):[];
+  const ans=typeof p.ans==="string"?p.ans.replace(/[^mh0-4]/g,"").slice(0,100):"";
+  const sunk=Array.isArray(p.sunk)?p.sunk.filter(a=>Array.isArray(a)&&a.length===4&&a.every(Number.isInteger)&&a[0]>=0&&a[0]<5&&fits({r:a[1],c:a[2],h:!!a[3]},SHIPS[a[0]][1])):[];
+  const commit=typeof p.commit==="string"?p.commit.slice(0,80):null;
+  let reveal=null;
+  if(p.reveal&&validFleet(p.reveal.fleet)&&typeof p.reveal.salt==="string")
+    reveal={fleet:p.reveal.fleet.map(s=>({r:s.r,c:s.c,h:s.h})),salt:p.reveal.salt.slice(0,64)};
+  return{role:p.role==="host"?"host":"guest",name:String(p.name||"").slice(0,24),round,shots,ans,sunk,commit,reveal}}
+
+function onOpp(p,online){
+  S.oppOnline=online;
+  if(p){const s=sanitize(p);if(s&&s.role!==S.role){S.oppLatest=s;if(s.round===S.round)S.oppCur=s}}
+  after()}
+function after(){
+  const d=derive();
+  if(d.over&&!S.reveal&&S.salt)S.reveal={fleet:S.fleet,salt:S.salt};
+  push();save();render();verify(d)}
+const oppName=()=>(S.oppLatest&&S.oppLatest.name)||"Your opponent";
+
+async function verify(d){
+  const o=d.o;if(!d.over||!o||!o.reveal||(S.verify&&S.verify.round===S.round))return;
+  const round=S.round;S.verify={round,state:"checking"};
+  const h=await sha(JSON.stringify(o.reveal.fleet)+o.reveal.salt);
+  const e=evaluate(o.reveal.fleet,S.shots);
+  const hashOk=o.commit==="nohash"||h==="nohash"||h===o.commit;
+  const ansOk=e.ans.slice(0,o.ans.length)===o.ans.slice(0,S.shots.length)&&o.ans.length>=Math.min(S.shots.length,o.ans.length);
+  if(S.round!==round)return;
+  S.verify={round,state:hashOk&&ansOk?"ok":"bad"};render()}
+
+/* ---------- actions ---------- */
+function flash(t){const n=$("#note");n.textContent=t;clearTimeout(flash.t);flash.t=setTimeout(()=>n.textContent="",2600)}
+function tryPlace(k,s){const f=S.fleet.slice();f[k]={r:s.r,c:s.c,h:s.h};if(validFleet(f)){S.fleet=f;return true}return false}
+function ownClick(i){
+  if(S.commit)return;const m=occ(S.fleet);
+  if(m.has(i)){const k=m.get(i);S.sel=S.sel===k?null:k}
+  else if(S.sel!=null){const len=SHIPS[S.sel][1],h=S.fleet[S.sel].h;
+    const ns={r:Math.floor(i/10),c:i%10,h};
+    if(!tryPlace(S.sel,ns)){if(h)ns.c=Math.min(ns.c,10-len);else ns.r=Math.min(ns.r,10-len);
+      if(!tryPlace(S.sel,ns))flash("That spot overlaps another ship.")}}
+  render()}
+function rotate(){
+  if(S.sel==null||S.commit)return;const s=S.fleet[S.sel],len=SHIPS[S.sel][1];
+  const ns={r:s.r,c:s.c,h:!s.h};
+  if(!tryPlace(S.sel,ns)){if(ns.h)ns.c=Math.min(ns.c,10-len);else ns.r=Math.min(ns.r,10-len);
+    if(!tryPlace(S.sel,ns))flash("No room to turn it here.")}
+  render()}
+async function ready(){
+  if(S.commit||!validFleet(S.fleet))return;S.sel=null;S.salt=randHex(16);
+  S.commit=await sha(JSON.stringify(S.fleet)+S.salt);after()}
+function fire(i){const d=derive();if(!d.myTurn||S.shots.includes(i))return;S.shots=[...S.shots,i];after()}
+function rematch(){
+  const nr=S.oppLatest&&S.oppLatest.round>S.round?S.oppLatest.round:S.round+1;
+  S.round=nr;S.fleet=randomFleet();S.salt=null;S.commit=null;S.shots=[];S.reveal=null;S.verify=null;S.sel=null;
+  S.oppCur=S.oppLatest&&S.oppLatest.round===nr?S.oppLatest:null;after()}
+function save(){if(S.mode!=="room"||!S.code)return;
+  store("bs1.game",{code:S.code,role:S.role,round:S.round,fleet:S.fleet,salt:S.salt,commit:S.commit,shots:S.shots,reveal:S.reveal})}
+
+/* ---------- transport: Supabase Realtime presence, shaped like the Claude room ---------- */
+function sbRoom(client){
+  const me=randHex(8);
+  return{async join(name){
+    const ch=client.channel(name,{config:{presence:{key:me}}});
+    let peersCb=null,connCb=null,cur=null,connected=false,settled=false;
+    const emitPeers=()=>{if(!peersCb)return;const st=ch.presenceState(),peers=[];
+      for(const[k,metas]of Object.entries(st)){const m=metas[metas.length-1];if(m&&m.s)peers.push({sameTab:k===me,presence:m.s})}
+      peersCb({peers})};
+    ch.on("presence",{event:"sync"},emitPeers);
+    await new Promise((res,rej)=>{
+      const t=setTimeout(()=>{if(!settled){settled=true;rej({code:"upstream_error"})}},12000);
+      ch.subscribe(st=>{
+        if(st==="SUBSCRIBED"){connected=true;connCb&&connCb(true);if(cur)ch.track({s:cur}).catch(()=>{});
+          if(!settled){settled=true;clearTimeout(t);res()}}
+        else if(st==="CHANNEL_ERROR"||st==="TIMED_OUT"||st==="CLOSED"){connected=false;connCb&&connCb(false);
+          if(!settled){settled=true;clearTimeout(t);rej({code:"upstream_error"})}}})});
+    return{
+      presence(s){cur=s;return connected?ch.track({s}).then(()=>{}):Promise.resolve()},
+      onPeers(cb){peersCb=cb;setTimeout(emitPeers,0);return()=>{}},
+      onConnection(cb){connCb=cb;setTimeout(()=>cb(connected),0);return()=>{}},
+      async leave(){try{await ch.untrack()}catch(e){}try{client.removeChannel(ch)}catch(e){}}}}}}
+const pageLink=code=>location.origin+location.pathname+"#"+code;
+function setHash(code){try{history.replaceState(null,"",location.pathname+location.search+(code?"#"+code:""))}catch(e){}}
+
+/* ---------- transport: Claude room ---------- */
+const ALPH="abcdefghjkmnpqrstuvwxyz23456789";
+const newCode=()=>Array.from({length:5},()=>ALPH[rnd(ALPH.length)]).join("");
+async function enterRoom(role,code,restore){
+  S.err="";S.conn="opening";renderConn();
+  let r;
+  try{r=await ROOM.join("bs-"+code)}
+  catch(e){S.conn="idle";S.err=e&&e.code==="not_permitted"?"Game rooms aren't available for your account on this page.":"Couldn't reach the game server. Check your connection and try again, or play by swapping codes instead.";render();return}
+  RT=r;S.role=role;S.code=code;S.conn="room";if(S.backend==="sb")setHash(code);
+  if(restore&&validFleet(restore.fleet)){Object.assign(S,{round:restore.round||0,fleet:restore.fleet,salt:restore.salt||null,
+    commit:restore.commit||null,shots:Array.isArray(restore.shots)?restore.shots:[],reveal:restore.reveal||null});S.oppCur=null;S.oppLatest=null;S.verify=null}
+  else newGame(!S.commit);
+  T={send:s=>{r.presence(s).catch(()=>{})}};
+  r.onPeers(ch=>{const p=ch.peers.find(p=>!p.sameTab&&p.presence&&p.presence.app==="bs1"&&p.presence.role!==S.role);onOpp(p?p.presence:null,!!p)});
+  r.onConnection(c=>{S.link=c;renderLink()});
+  lastSent="";after();push(true)}
+function leave(){
+  if(RT){RT.leave().catch(()=>{});RT=null}
+  if(PC){try{PC.close()}catch(e){}PC=null}
+  T=null;S.conn="idle";S.role=null;S.code=null;S.link=false;S.oppOnline=false;S.invite=S.reply=S.inviteIn="";S.err="";
+  store("bs1.game",null);S.saved=null;if(S.backend==="sb")setHash("");newGame(false);render()}
+
+/* ---------- transport: direct browser-to-browser ---------- */
+const ICE={iceServers:[{urls:["stun:stun.l.google.com:19302","stun:stun1.l.google.com:19302"]}]};
+const b64u=b=>{let s="";b.forEach(x=>s+=String.fromCharCode(x));return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")};
+const unb64u=t=>{t=t.replace(/-/g,"+").replace(/_/g,"/");while(t.length%4)t+="=";return Uint8Array.from(atob(t),c=>c.charCodeAt(0))};
+async function pipe(bytes,stream){return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer())}
+async function enc(obj){let b=new TextEncoder().encode(JSON.stringify(obj)),tag="j";
+  if(window.CompressionStream){try{b=await pipe(b,new CompressionStream("deflate-raw"));tag="z"}catch(e){}}
+  return"BS1"+tag+b64u(b)}
+async function dec(code){const m=String(code).replace(/\s+/g,"").match(/BS1([jz])([A-Za-z0-9_-]+)/);if(!m)throw new Error("bad");
+  let b=unb64u(m[2]);if(m[1]==="z")b=await pipe(b,new DecompressionStream("deflate-raw"));return JSON.parse(new TextDecoder().decode(b))}
+function gather(pc){if(pc.iceGatheringState==="complete")return Promise.resolve();
+  return new Promise(res=>{const t=setTimeout(res,3500);pc.addEventListener("icegatheringstatechange",()=>{if(pc.iceGatheringState==="complete"){clearTimeout(t);res()}})})}
+function newPC(){const pc=new RTCPeerConnection(ICE);
+  pc.onconnectionstatechange=()=>{const st=pc.connectionState;
+    if(st==="failed"){S.err="The direct link failed. Some mobile and office networks block browser-to-browser connections; try both players on home Wi-Fi.";S.link=false;S.oppOnline=false;if(S.conn==="connecting")S.conn=S.role==="host"?"host":"join2";render()}
+    if(st==="disconnected"||st==="closed"){S.link=false;S.oppOnline=false;render()}};
+  return pc}
+function wire(dc){
+  dc.onopen=()=>{S.link=true;S.oppOnline=true;S.conn="live";S.err="";
+    T={send:s=>{if(dc.readyState==="open")dc.send(JSON.stringify(s))}};lastSent="";push(true);render()};
+  dc.onmessage=e=>{let p;try{p=JSON.parse(e.data)}catch(x){return}onOpp(p,true)};
+  dc.onclose=()=>{S.link=false;S.oppOnline=false;render()}}
+async function startHost(){
+  S.err="";S.role="host";S.conn="host1";newGame(true);render();
+  try{PC=newPC();wire(PC.createDataChannel("bs"));await PC.setLocalDescription(await PC.createOffer());await gather(PC);
+    S.invite=await enc({t:"o",sdp:PC.localDescription.sdp});S.conn="host"}
+  catch(e){S.conn="idle";S.err="This browser couldn't set up a direct connection."}
+  render()}
+async function acceptReply(){
+  const txt=$("#replyIn").value;
+  try{const o=await dec(txt);if(o.t!=="a")throw 0;await PC.setRemoteDescription({type:"answer",sdp:o.sdp});S.conn="connecting";S.err=""}
+  catch(e){S.err="That isn't a reply code. Copy the whole code your opponent sent back."}
+  render()}
+function startJoin(){S.err="";S.role="guest";S.conn="join";newGame(true);render()}
+async function makeReply(){
+  const txt=S.inviteIn||($("#inviteIn")&&$("#inviteIn").value)||"";S.inviteIn="";
+  try{const o=await dec(txt);if(o.t!=="o")throw 0;S.conn="join1";S.err="";render();
+    PC=newPC();PC.ondatachannel=e=>wire(e.channel);
+    await PC.setRemoteDescription({type:"offer",sdp:o.sdp});await PC.setLocalDescription(await PC.createAnswer());await gather(PC);
+    S.reply=await enc({t:"a",sdp:PC.localDescription.sdp});S.conn="join2"}
+  catch(e){S.err="That isn't an invite code. Copy the whole code the host sent you.";S.conn="join"}
+  render()}
+
+/* ---------- copy ---------- */
+function selectEl(el){if(el.select){el.focus();el.select()}else{const r=document.createRange();r.selectNodeContents(el);const s=getSelection();s.removeAllRanges();s.addRange(r)}}
+function copy(text,btn,el){
+  const done=()=>{const l=btn.textContent;btn.textContent="Copied";setTimeout(()=>btn.textContent=l,1400)};
+  try{navigator.clipboard.writeText(text).then(done,()=>el&&selectEl(el))}catch(e){el&&selectEl(el)}}
+
+/* ---------- rendering ---------- */
+const nameField=()=>`<label class="fld" for="nameIn">Your name<input id="nameIn" maxlength="24" placeholder="Captain" value="${esc(S.name)}"></label>`;
+let connKey="";
+function connHTML(){
+  const err=S.err?`<p class="err">${esc(S.err)}</p>`:"";
+  if(S.mode===null||S.mode==="wait")return`<div class="card"><p>Connecting…</p></div>`;
+  if(S.mode==="none")return`<div class="card"><h2>Online play is off here</h2><p>Two-player games need both players signed in to Claude with access to this page. Ask whoever shared it to invite you, then reopen it.</p></div>`;
+  if(S.mode==="room"){
+    if(S.conn==="opening")return`<div class="card"><p>Opening the game room…</p></div>`;
+    if(S.conn==="room"){
+      if(S.oppOnline)return`<div class="card compact"><p>Playing <b>${esc(oppName())}</b> · game <b>${S.code.toUpperCase()}</b></p><button class="btn" data-act="leave">Leave game</button></div>`;
+      const sb=S.backend==="sb";
+      return`<div class="card"><span class="step">Game code</span><div class="row"><span class="bigcode" id="codeOut">${S.code.toUpperCase()}</span>${sb?`<button class="btn pri" data-act="copyRoomLink">Copy invite link</button>`:""}<button class="btn" data-act="copycode">Copy code</button></div>
+        <p>${S.oppLatest?`${esc(oppName())} has left. The game picks up again when they reopen ${sb?"the link":"this page and join with the same code"}.`:sb?"Send the link to your opponent. Opening it drops them straight into this game.":"Send this code to your opponent. They open this same page, choose Join and type it in."}</p>
+        <div class="row"><button class="btn" data-act="leave">Leave game</button></div></div>`}
+    return`<div class="card"><h2>Start a game</h2>${nameField()}
+      <div class="row"><button class="btn pri" data-act="roomNew">New game</button><span class="hint">or join with a code</span>
+      <input id="codeIn" maxlength="5" autocomplete="off" aria-label="Game code" placeholder="CODE"><button class="btn" data-act="roomJoin">Join</button></div>
+      ${S.saved?`<div class="row"><button class="btn" data-act="rejoin">Rejoin game ${esc(String(S.saved.code).toUpperCase())}</button></div>`:""}${err}
+      ${S.backend==="sb"&&window.RTCPeerConnection?`<p class="hint">Server not working? <button class="btn" data-act="direct">Connect directly instead</button></p>`:""}</div>`}
+  /* direct mode */
+  if(S.mode==="rtc"){
+    const canLink=/^https?:/.test(location.protocol);
+    switch(S.conn){
+      case"host1":return`<div class="card"><p>Preparing your invite…</p></div>`;
+      case"host":return`<div class="card"><h2>Hosting</h2>
+        <span class="step">Step 1 · send this invite</span><textarea id="inviteOut" readonly>${esc(S.invite)}</textarea>
+        <div class="row"><button class="btn pri" data-act="copyInvite">Copy invite</button>${canLink?`<button class="btn" data-act="copyLink">Copy invite link</button>`:""}</div>
+        <span class="step">Step 2 · paste their reply</span><textarea id="replyIn" placeholder="Their reply code starts with BS1"></textarea>
+        <div class="row"><button class="btn pri" data-act="acceptReply">Connect</button><button class="btn" data-act="leave">Cancel</button></div>${err}</div>`;
+      case"connecting":return`<div class="card"><p>Connecting to your opponent…</p>${err}</div>`;
+      case"join":return`<div class="card"><h2>Joining</h2><span class="step">Step 1 · paste the host's invite</span>
+        <textarea id="inviteIn" placeholder="The invite code starts with BS1"></textarea>
+        <div class="row"><button class="btn pri" data-act="makeReply">Make my reply</button><button class="btn" data-act="leave">Cancel</button></div>${err}</div>`;
+      case"join1":return`<div class="card"><p>Preparing your reply…</p></div>`;
+      case"join2":return`<div class="card"><h2>Joining</h2><span class="step">Step 2 · send this reply back</span>
+        <textarea id="replyOut" readonly>${esc(S.reply)}</textarea>
+        <div class="row"><button class="btn pri" data-act="copyReply">Copy reply</button><button class="btn" data-act="leave">Cancel</button></div>
+        <p>The game connects as soon as the host pastes it.</p>${err}</div>`;
+      case"live":return S.link
+        ?`<div class="card compact"><p>Connected to <b>${esc(oppName())}</b></p><button class="btn" data-act="leave">Leave game</button></div>`
+        :`<div class="card"><p>The connection to ${esc(oppName())} dropped. Direct links can't reconnect on their own, so start a new game to keep playing.</p><div class="row"><button class="btn pri" data-act="leave">New game</button></div>${err}</div>`;
+    }
+    return`<div class="card"><h2>Play a friend</h2>
+      <p>Your two browsers connect straight to each other, with no accounts and no game server. To link them, you swap two codes over any chat app: the host sends an invite, the guest sends a reply.</p>
+      ${nameField()}<div class="row"><button class="btn pri" data-act="host">Host a game</button><button class="btn" data-act="join">Join a game</button></div>${err}</div>`}
+  return""}
+function renderConn(){
+  const key=[S.mode,S.conn,S.err,S.oppOnline,S.link,S.code,!!S.saved,S.invite.length,S.reply.length,S.conn==="live"||S.conn==="room"?oppName():""].join("|");
+  if(key===connKey)return;connKey=key;$("#conn").innerHTML=connHTML()}
+function renderLink(){
+  const on=S.mode==="room"?(S.link&&S.oppOnline):S.link;
+  $("#linkDot").classList.toggle("on",!!on);
+  $("#linkTxt").textContent=on?"Opponent online":S.conn==="room"?"Waiting for opponent":"Not connected"}
+
+function seg(f,k,i){const s=f[k],len=SHIPS[k][1],p=cellsOf(s,len).indexOf(i);
+  return(s.h?" h":" v")+(p===0?" bow":"")+(p===len-1?" stern":"")}
+function boardHTML(cellFn){
+  let h='<div class="corner"></div>';for(let c=0;c<10;c++)h+=`<div class="lab">${c+1}</div>`;
+  for(let r=0;r<10;r++){h+=`<div class="lab">${ROWS[r]}</div>`;for(let c=0;c<10;c++)h+=cellFn(r*10+c)}return h}
+
+function lastEvent(d){
+  /* the most recent shot that has a result, on whichever board */
+  const fo=d.iFirst,my=S.shots.length,op=d.oppShots.length;let ev=null;
+  const seq=[];for(let k=0;k<Math.max(my,op);k++){const a=fo?["me","op"]:["op","me"];
+    for(const w of a){if(w==="me"&&k<my)seq.push({w,k,cell:S.shots[k],res:d.oAns[k]});if(w==="op"&&k<op)seq.push({w,k,cell:d.oppShots[k],res:d.mine.ans[k]})}}
+  return seq}
+
+function render(){
+  const d=derive();renderConn();renderLink();
+  const placing=!S.commit;
+  /* status */
+  const st=$("#status");st.className="status";let big,sub,end="";
+  const on=oppName();
+  if(placing){big="Place your fleet";sub=T&&S.oppOnline?"Press Ready when your ships are where you want them.":"Arrange your ships while you set up the game."}
+  else if(d.over){
+    st.classList.add(d.over);big=d.over==="win"?"Victory":"Defeat";
+    sub=d.over==="win"?`You sank ${esc(on)}'s whole fleet in ${S.shots.length} shots.`:`${esc(on)} sank your whole fleet.`;
+    const v=S.verify&&S.verify.round===S.round?S.verify.state:null;
+    const vt=v==="ok"?"Their revealed fleet matches every answer they gave.":v==="bad"?"Their revealed fleet doesn't match their answers.":"Waiting for their fleet to be revealed…";
+    const wants=S.oppLatest&&S.oppLatest.round>S.round;
+    end=`<span class="verify${v==="bad"?" bad":""}">${vt}</span><button class="btn flag" data-act="rematch">${wants?"Accept rematch":"Rematch"}</button>${wants?`<span class="verify">${esc(on)} wants another round.</span>`:""}`}
+  else if(!d.o){big="Waiting";sub=S.oppLatest&&S.oppLatest.round<S.round?`Waiting for ${esc(on)} to start the rematch.`:T&&S.oppOnline?`Waiting for ${esc(on)}.`:"Waiting for an opponent to connect."}
+  else if(!d.oppReady){big="Waiting";sub=`${esc(on)} is still placing ships.`}
+  else if(d.myTurn){st.classList.add("turn");big="Your shot";sub=S.shots.length===0&&d.oppShots.length===0?"You fire first. Pick a square in enemy waters.":"Pick a square in enemy waters."}
+  else if(!d.resultsIn){big="Shot away";sub=`Fired at ${coord(S.shots[S.shots.length-1])}. Waiting for ${esc(on)} to call it…`}
+  else{big=`${esc(on)}'s shot`;sub=S.shots.length===0&&d.oppShots.length===0?`${esc(on)} fires first this round.`:"Stand by."}
+  if(!placing&&!d.over&&T&&!S.oppOnline&&d.o)sub+=` ${esc(on)} is offline right now.`;
+  $("#stBig").textContent=big.replace(/&#39;/g,"'").replace(/&amp;/g,"&");$("#stSub").innerHTML=sub;$("#stEnd").innerHTML=end;
+
+  /* boards */
+  const playView=!placing;
+  $("#boards").classList.toggle("play",playView);
+  $("#tgtFig").hidden=!playView;$("#fleets").hidden=!playView;
+  $("#placeTools").hidden=$("#placeHint").hidden=!placing;
+  $("#own").classList.toggle("small",playView);
+  $("#rotBtn").disabled=S.sel==null;
+  const seq=lastEvent(d);const last=[...seq].reverse().find(e=>e.res!==undefined);
+  /* own board */
+  const m=occ(S.fleet);const opRes=new Map();d.oppShots.forEach((x,k)=>{if(!opRes.has(x))opRes.set(x,d.mine.ans[k])});
+  $("#own").innerHTML=boardHTML(i=>{
+    let cls="cell",lbl=coord(i);
+    if(m.has(i)){const k=m.get(i);cls+=" ship"+seg(S.fleet,k,i)+(S.sel===k?" sel":"");lbl+=", "+SHIPS[k][0]}
+    if(opRes.has(i)){const r=opRes.get(i);cls+=r==="m"?" miss":" hit";lbl+=r==="m"?", missed":", hit"}
+    if(last&&last.w==="op"&&last.cell===i)cls+=" last fresh";
+    if(placing)cls+=" can";
+    return`<button class="${cls}" data-own="${i}" aria-label="${lbl}"${placing?"":" tabindex=\"-1\""}><span class="mk"></span></button>`});
+  /* target board */
+  if(playView){
+    const sunkCells=new Map();
+    if(d.o)d.o.sunk.forEach(([k,r,c,h])=>{if(d.enemySunk.has(k)){const f=[];f[k]={r,c,h:!!h};cellsOf(f[k],SHIPS[k][1]).forEach(x=>sunkCells.set(x,[f,k]))}});
+    const ghost=new Map();
+    if(d.over&&d.o&&d.o.reveal){const f=d.o.reveal.fleet;f.forEach((s,k)=>{if(!d.enemySunk.has(k))cellsOf(s,SHIPS[k][1]).forEach(x=>ghost.set(x,k))})}
+    $("#tgt").innerHTML=boardHTML(i=>{
+      const k=S.shots.indexOf(i);let cls="cell",lbl=coord(i);
+      if(sunkCells.has(i)){const[f,s]=sunkCells.get(i);cls+=" sunkc"+seg(f,s,i)}
+      else if(ghost.has(i)){cls+=" ghost"+seg(d.o.reveal.fleet,ghost.get(i),i)}
+      if(k>=0){const r=d.oAns[k];if(r===undefined){cls+=" pend";lbl+=", waiting"}else{cls+=r==="m"?" miss":" hit";lbl+=r==="m"?", miss":", hit"}}
+      const can=d.myTurn&&k<0;if(can)cls+=" can";
+      if(last&&last.w==="me"&&last.cell===i)cls+=" last fresh";
+      return`<button class="${cls}" data-tgt="${i}" aria-label="${lbl}"${can?"":" disabled"}><span class="mk"></span></button>`});
+  }
+  $("#ownTally").textContent=playView?`${5-d.mySunk.size} of 5 afloat`:"";
+  $("#tgtTally").textContent=playView?`${S.shots.length} shots · ${d.enemySunk.size} sunk`:"";
+  /* fleets + log */
+  if(playView){
+    $("#enemyList").innerHTML=SHIPS.map(([n,l],k)=>`<li class="${d.enemySunk.has(k)?"down":""}"><span>${n}</span><span class="pips">${"<i></i>".repeat(l)}</span></li>`).join("");
+    $("#myList").innerHTML=SHIPS.map(([n,l],k)=>{const h=d.mine.hits[k];return`<li class="${h===l?"down":""}"><span>${n}</span><span class="pips">${Array.from({length:l},(_,j)=>`<i class="${j<h?"h":""}"></i>`).join("")}</span></li>`}).join("");
+    const word=r=>r===undefined?"…":r==="m"?"miss":r==="h"?"hit":"sank the "+SHIPS[+r][0];
+    const lines=seq.slice(-7).reverse().map(e=>`<li>${e.w==="me"?"You":esc(oppName())} → ${coord(e.cell)} · ${word(e.res)}</li>`);
+    $("#log").innerHTML=lines.join("")||"<li>No shots yet</li>"}
+}
+
+/* ---------- events ---------- */
+document.addEventListener("click",e=>{
+  const own=e.target.closest("[data-own]");if(own){ownClick(+own.dataset.own);return}
+  const tgt=e.target.closest("[data-tgt]");if(tgt){fire(+tgt.dataset.tgt);return}
+  const b=e.target.closest("[data-act]");if(!b)return;
+  switch(b.dataset.act){
+    case"shuffle":if(!S.commit){S.fleet=randomFleet();S.sel=null;render()}break;
+    case"rotate":rotate();break;
+    case"ready":ready();break;
+    case"rematch":rematch();break;
+    case"leave":leave();break;
+    case"roomNew":enterRoom("host",newCode());break;
+    case"roomJoin":{const c=($("#codeIn").value||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+      if(c.length!==5){S.err="Game codes are 5 characters.";connKey="";render();break}enterRoom("guest",c);break}
+    case"rejoin":enterRoom(S.saved.role,S.saved.code,S.saved);break;
+    case"copycode":copy(S.code.toUpperCase(),b,$("#codeOut"));break;
+    case"copyRoomLink":copy(pageLink(S.code),b,$("#codeOut"));break;
+    case"direct":S.mode="rtc";S.err="";render();break;
+    case"host":startHost();break;
+    case"join":startJoin();break;
+    case"acceptReply":acceptReply();break;
+    case"makeReply":makeReply();break;
+    case"copyInvite":copy(S.invite,b,$("#inviteOut"));break;
+    case"copyLink":copy(location.href.split("#")[0]+"#join="+S.invite,b,$("#inviteOut"));break;
+    case"copyReply":copy(S.reply,b,$("#replyOut"));break;
+  }});
+document.addEventListener("input",e=>{if(e.target.id==="nameIn"){S.name=e.target.value.slice(0,24);store("bs1.name",S.name);push()}});
+document.addEventListener("keydown",e=>{
+  if(e.key==="Enter"&&e.target.id==="codeIn")$('[data-act="roomJoin"]').click();
+  if((e.key==="r"||e.key==="R")&&!/INPUT|TEXTAREA/.test(e.target.tagName))rotate()});
+
+/* ---------- start ---------- */
+render();
+(async()=>{
+  if(window.claude&&typeof window.claude.use==="function"){
+    S.mode="wait";render();let r=null;try{r=await window.claude.use("room")}catch(e){}
+    ROOM=r;S.mode=r?"room":"none";
+    const g=load("bs1.game");if(r&&g&&g.code&&g.role)S.saved=g;render();
+  }else if(window.supabase&&typeof window.supabase.createClient==="function"&&SUPABASE_URL&&!/^#join=/.test(location.hash)){
+    let client=null;
+    try{client=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:false}})}catch(e){}
+    if(client){
+      ROOM=sbRoom(client);S.mode="room";S.backend="sb";
+      const g=load("bs1.game");if(g&&g.code&&g.role)S.saved=g;
+      const h=location.hash.match(/^#([a-z0-9]{5})$/i);
+      render();
+      if(h){const code=h[1].toLowerCase();
+        if(g&&g.code===code)enterRoom(g.role,code,g);else enterRoom("guest",code)}
+      return}
+    S.mode=window.RTCPeerConnection?"rtc":"none";render();
+  }else{
+    S.mode=window.RTCPeerConnection?"rtc":"none";
+    const m=location.hash.match(/^#join=(BS1[jz][A-Za-z0-9_-]+)$/);
+    render();
+    if(m&&S.mode==="rtc"){history.replaceState(null,"",location.pathname+location.search);S.role="guest";newGame(true);S.inviteIn=m[1];makeReply()}
+  }
+})();
+</script>
+
+</body>
+</html>
