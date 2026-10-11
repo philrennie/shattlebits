@@ -283,26 +283,37 @@ function save(){if(S.mode!=="room"||!S.code)return;
 
 /* ---------- transport: Supabase Realtime presence, shaped like the Claude room ---------- */
 function sbRoom(client){
-  /* Phones freeze background pages, which leaves the socket looking open but dead.
-     So: re-track on every (re)join, check our own presence is really there, and tear
-     the whole connection down and rebuild it whenever the page wakes up or a send fails. */
+  /* Each player broadcasts their whole game state on every change and again every 4s,
+     with server acknowledgement. A lost message is replaced by the next one, a dead
+     socket shows up as a failed ack and gets rebuilt, and "online" simply means we
+     have heard from them in the last 15s. Shaped like the Claude room so the game
+     code above doesn't care which one it is talking to. */
   const me=randHex(8);
   return{async join(name){
-    let ch=null,peersCb=null,connCb=null,cur=null,connected=false,left=false,rebuilding=false,hiddenAt=0;
+    let ch=null,peersCb=null,connCb=null,cur=null,seq=0,hello=false,connected=false,left=false,rebuilding=false,hiddenAt=0,lastSig="";
+    const heard=new Map(); /* sender id -> {s, seq, at} */
     const setConn=v=>{if(v!==connected){connected=v;connCb&&connCb(v)}};
-    const emitPeers=()=>{if(!peersCb||!ch)return;const st=ch.presenceState(),peers=[];
-      for(const[k,metas]of Object.entries(st)){const m=metas[metas.length-1];if(m&&m.s)peers.push({sameTab:k===me,presence:m.s})}
-      peersCb({peers})};
-    const sendTrack=async()=>{if(!ch||!cur||!connected)return;
-      let r;try{r=await ch.track({s:cur})}catch(e){r="error"}
-      if(r!=="ok")rebuild()};
+    const emitPeers=force=>{if(!peersCb)return;const now=Date.now();
+      const live=[...heard.entries()].filter(([,h])=>now-h.at<15000).sort((x,y)=>y[1].at-x[1].at);
+      const sig=live.map(([id,h])=>id+":"+h.seq).join(",");
+      if(!force&&sig===lastSig)return;lastSig=sig;
+      peersCb({peers:live.map(([,h])=>({sameTab:false,presence:h.s}))})};
+    const send=async kind=>{if(!ch||!connected||!cur||left)return;const c=ch;
+      if(hello){kind="hello";hello=false}
+      let r;try{r=await c.send({type:"broadcast",event:"st",payload:{id:me,seq,kind,s:cur}})}catch(e){r="error"}
+      if(r!=="ok"&&c===ch)rebuild()};
     const open=()=>new Promise((res,rej)=>{
-      let settled=false;const c=client.channel(name,{config:{presence:{key:me}}});ch=c;
-      c.on("presence",{event:"sync"},()=>{if(c===ch)emitPeers()});
+      let settled=false;const c=client.channel(name,{config:{broadcast:{self:false,ack:true}}});ch=c;
+      c.on("broadcast",{event:"st"},msg=>{if(c!==ch)return;const p=msg&&msg.payload;
+        if(!p||typeof p.id!=="string"||p.id===me||!p.s||!Number.isInteger(p.seq))return;
+        const h=heard.get(p.id);
+        if(!h||p.seq>=h.seq)heard.set(p.id,{s:p.s,seq:p.seq,at:Date.now()});else h.at=Date.now();
+        if(p.kind==="hello")send("st");
+        emitPeers()});
       const t=setTimeout(()=>{if(!settled){settled=true;rej({code:"upstream_error"})}},12000);
       c.subscribe(st=>{
         if(c!==ch)return;
-        if(st==="SUBSCRIBED"){setConn(true);sendTrack();if(!settled){settled=true;clearTimeout(t);res()}}
+        if(st==="SUBSCRIBED"){setConn(true);hello=true;send("hello");if(!settled){settled=true;clearTimeout(t);res()}}
         else if(st==="CHANNEL_ERROR"||st==="TIMED_OUT"||st==="CLOSED"){setConn(false);
           if(!settled){settled=true;clearTimeout(t);rej({code:"upstream_error"})}
           else if(st!=="CLOSED")setTimeout(()=>{if(!connected)rebuild()},4000)}})});
@@ -313,26 +324,25 @@ function sbRoom(client){
       try{await client.realtime.disconnect()}catch(e){}
       for(let wait=500;!left;wait=Math.min(wait*2,8000)){
         try{await open();break}catch(e){try{if(ch)await client.removeChannel(ch)}catch(x){}ch=null;await new Promise(r=>setTimeout(r,wait))}}
-      rebuilding=false;emitPeers()}
+      rebuilding=false}
     const onWake=()=>{if(left)return;
       if(document.visibilityState==="hidden"){hiddenAt=Date.now();return}
-      if(hiddenAt&&Date.now()-hiddenAt>2000)rebuild();else sendTrack();hiddenAt=0};
+      if(hiddenAt&&Date.now()-hiddenAt>2000)rebuild();else send("st");hiddenAt=0};
     const onOnline=()=>{if(!left)rebuild()};
     const onShow=e=>{if(e.persisted&&!left)rebuild()};
     document.addEventListener("visibilitychange",onWake);
     window.addEventListener("online",onOnline);window.addEventListener("pageshow",onShow);
-    /* watchdog: our own presence must be visible to the server; if not, re-send or rebuild */
-    const dog=setInterval(()=>{if(left||rebuilding||document.visibilityState==="hidden")return;
-      if(!connected||!ch||ch.state!=="joined"){rebuild();return}
-      if(cur&&!(me in ch.presenceState()))sendTrack()},10000);
+    const beat=setInterval(()=>{if(left||rebuilding)return;
+      if(!connected||!ch||ch.state!=="joined"){if(document.visibilityState!=="hidden")rebuild();return}
+      send("st");emitPeers()},4000);
     await open();
     return{
-      presence(s){cur=s;sendTrack();return Promise.resolve()},
-      onPeers(cb){peersCb=cb;setTimeout(emitPeers,0);return()=>{}},
+      presence(s){if(JSON.stringify(s)!==JSON.stringify(cur)){cur=s;seq++;send("st")}return Promise.resolve()},
+      onPeers(cb){peersCb=cb;setTimeout(()=>emitPeers(true),0);return()=>{}},
       onConnection(cb){connCb=cb;setTimeout(()=>cb(connected),0);return()=>{}},
-      async leave(){left=true;clearInterval(dog);
+      async leave(){left=true;clearInterval(beat);
         document.removeEventListener("visibilitychange",onWake);window.removeEventListener("online",onOnline);window.removeEventListener("pageshow",onShow);
-        try{if(ch)await ch.untrack()}catch(e){}try{if(ch)await client.removeChannel(ch)}catch(e){}ch=null}}}}}
+        try{if(ch)await client.removeChannel(ch)}catch(e){}ch=null}}}}}
 const pageLink=code=>location.origin+location.pathname+"#"+code;
 function setHash(code){try{history.replaceState(null,"",location.pathname+location.search+(code?"#"+code:""))}catch(e){}}
 
