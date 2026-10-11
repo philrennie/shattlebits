@@ -43,6 +43,7 @@ h1{font:800 clamp(30px,8vw,44px)/1 var(--display);letter-spacing:.04em;margin:0;
 .step{font:500 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
 label.fld{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 input,textarea{font:500 14px/1.4 var(--mono);color:var(--ink);background:var(--paper);border:1px solid var(--rule);border-radius:4px;padding:8px 10px}
+input[aria-invalid="true"]{border-color:var(--hit)}
 input:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--flag);outline-offset:2px}
 textarea{width:100%;min-height:76px;resize:vertical;word-break:break-all;font-size:12px}
 #codeIn{width:8ch;text-transform:uppercase;letter-spacing:.15em}
@@ -224,8 +225,8 @@ function derive(){
   return{o,meReady,oppReady,iFirst,oppShots,mine,oAns,enemySunk,mySunk,over,playing,resultsIn,myTurn}}
 
 function myState(){
-  if(S.role==="spectator")return{app:"bs1",role:"spectator",pid:S.pid,name:S.name.slice(0,24),round:0};
-  const d=derive();return{app:"bs1",role:S.role,pid:S.pid,with:S.role==="host"?S.with:null,name:S.name.slice(0,24),round:S.round,
+  if(S.role==="spectator")return{app:"bs1",role:"spectator",pid:S.pid,name:S.name.trim().slice(0,24),round:0};
+  const d=derive();return{app:"bs1",role:S.role,pid:S.pid,with:S.role==="host"?S.with:null,name:S.name.trim().slice(0,24),round:S.round,
   commit:S.commit,shots:S.shots,ans:d.mine.ans,sunk:d.mine.sunk,reveal:S.reveal}}
 function push(force){if(!T)return;const st=myState(),j=JSON.stringify(st);if(!force&&j===lastSent)return;lastSent=j;T.send(st)}
 
@@ -436,7 +437,8 @@ async function acceptReply(){
   render()}
 function startJoin(){S.err="";S.role="guest";S.conn="join";newGame(true);render()}
 async function makeReply(){
-  const txt=S.inviteIn||($("#inviteIn")&&$("#inviteIn").value)||"";S.inviteIn="";
+  if(needName())return;
+  const txt=($("#inviteIn")&&$("#inviteIn").value)||S.inviteIn||"";S.inviteIn="";
   try{const o=await dec(txt);if(o.t!=="o")throw 0;S.conn="join1";S.err="";render();
     PC=newPC();PC.ondatachannel=e=>wire(e.channel);
     await PC.setRemoteDescription({type:"offer",sdp:o.sdp});await PC.setLocalDescription(await PC.createAnswer());await gather(PC);
@@ -451,7 +453,11 @@ function copy(text,btn,el){
   try{navigator.clipboard.writeText(text).then(done,()=>el&&selectEl(el))}catch(e){el&&selectEl(el)}}
 
 /* ---------- rendering ---------- */
-const nameField=()=>`<label class="fld" for="nameIn">Your name<input id="nameIn" maxlength="24" placeholder="Captain" value="${esc(S.name)}"></label>`;
+const NAME_ERR="Enter your name first. It's how the other player and any spectators see you.";
+const nameField=()=>`<label class="fld" for="nameIn">Your name<input id="nameIn" maxlength="24" required autocomplete="nickname" placeholder="e.g. Ann" value="${esc(S.name)}"${S.err===NAME_ERR?' aria-invalid="true"':""}></label>`;
+function needName(){
+  if(S.name.trim())return false;
+  S.err=NAME_ERR;render();const f=$("#nameIn");if(f)f.focus();return true}
 let connKey="";
 function connHTML(){
   const err=S.err?`<p class="err">${esc(S.err)}</p>`:"";
@@ -464,6 +470,9 @@ function connHTML(){
       const sb=S.backend==="sb";
       return`<div class="card"><span class="step">Game code</span><div class="row"><span class="bigcode" id="codeOut">${S.code.toUpperCase()}</span>${sb?`<button class="btn pri" data-act="copyRoomLink">Copy invite link</button>`:""}<button class="btn" data-act="copycode">Copy code</button></div>
         <p>${S.oppLatest?`${esc(oppName())} has left. The game picks up again when they reopen ${sb?"the link":"this page and join with the same code"}.`:sb?"Send the link to your opponent. Opening it drops them straight into this game.":"Send this code to your opponent. They open this same page, choose Join and type it in."}</p></div>`}
+    if(S.pending)return`<div class="card"><h2>Join game ${esc(S.pending.code.toUpperCase())}</h2>
+      <p>You've been invited to a game. Enter your name to join.</p>${nameField()}
+      <div class="row"><button class="btn pri" data-act="pendingJoin">Join game</button><button class="btn" data-act="pendingCancel">Not now</button></div>${err}</div>`;
     return`<div class="card"><h2>Start a game</h2>${nameField()}
       <div class="row"><button class="btn pri" data-act="roomNew">New game</button><span class="hint">or join with a code</span>
       <input id="codeIn" maxlength="5" autocomplete="off" aria-label="Game code" placeholder="CODE"><button class="btn" data-act="roomJoin">Join</button></div>
@@ -480,8 +489,8 @@ function connHTML(){
         <span class="step">Step 2 · paste their reply</span><textarea id="replyIn" placeholder="Their reply code starts with BS1"></textarea>
         <div class="row"><button class="btn pri" data-act="acceptReply">Connect</button><button class="btn" data-act="leave">Cancel</button></div>${err}</div>`;
       case"connecting":return`<div class="card"><p>Connecting to your opponent…</p>${err}</div>`;
-      case"join":return`<div class="card"><h2>Joining</h2><span class="step">Step 1 · paste the host's invite</span>
-        <textarea id="inviteIn" placeholder="The invite code starts with BS1"></textarea>
+      case"join":return`<div class="card"><h2>Joining</h2>${nameField()}<span class="step">Step 1 · paste the host's invite</span>
+        <textarea id="inviteIn" placeholder="The invite code starts with BS1">${esc(S.inviteIn)}</textarea>
         <div class="row"><button class="btn pri" data-act="makeReply">Make my reply</button><button class="btn" data-act="leave">Cancel</button></div>${err}</div>`;
       case"join1":return`<div class="card"><p>Preparing your reply…</p></div>`;
       case"join2":return`<div class="card"><h2>Joining</h2><span class="step">Step 2 · send this reply back</span>
@@ -495,7 +504,7 @@ function connHTML(){
       ${nameField()}<div class="row"><button class="btn pri" data-act="host">Host a game</button><button class="btn" data-act="join">Join a game</button></div>${err}</div>`}
   return""}
 function renderConn(){
-  const key=[S.mode,S.conn,S.role,S.err,S.oppOnline,S.link,S.code,!!S.saved,S.invite.length,S.reply.length,S.conn==="live"||S.conn==="room"?oppName():""].join("|");
+  const key=[S.mode,S.conn,S.role,S.err,S.pending&&S.pending.code,S.oppOnline,S.link,S.code,!!S.saved,S.invite.length,S.reply.length,S.conn==="live"||S.conn==="room"?oppName():""].join("|");
   if(key===connKey)return;connKey=key;const h=connHTML();$("#conn").innerHTML=h;$("#conn").hidden=!h}
 let footKey="";
 function footHTML(){
@@ -679,22 +688,28 @@ document.addEventListener("click",e=>{
     case"ready":ready();break;
     case"rematch":rematch();break;
     case"leave":leave();break;
-    case"roomNew":enterRoom("host",newCode());break;
-    case"roomJoin":{const c=($("#codeIn").value||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+    case"roomNew":if(!needName())enterRoom("host",newCode());break;
+    case"pendingJoin":if(!needName()){const p=S.pending;S.pending=null;enterRoom(p.role,p.code,p.restore)}break;
+    case"pendingCancel":S.pending=null;S.err="";setHash("");render();break;
+    case"roomJoin":{if(needName())break;const c=($("#codeIn").value||"").toLowerCase().replace(/[^a-z0-9]/g,"");
       if(c.length!==5){S.err="Game codes are 5 characters.";connKey="";render();break}enterRoom("guest",c);break}
-    case"rejoin":enterRoom(S.saved.role,S.saved.code,S.saved);break;
+    case"rejoin":if(!needName())enterRoom(S.saved.role,S.saved.code,S.saved);break;
     case"copycode":copy(S.code.toUpperCase(),b,$("#codeOut"));break;
     case"copyRoomLink":copy(pageLink(S.code),b,$("#codeOut"));break;
     case"direct":S.mode="rtc";S.err="";render();break;
-    case"host":startHost();break;
-    case"join":startJoin();break;
+    case"host":if(!needName())startHost();break;
+    case"join":if(!needName())startJoin();break;
     case"acceptReply":acceptReply();break;
     case"makeReply":makeReply();break;
     case"copyInvite":copy(S.invite,b,$("#inviteOut"));break;
     case"copyLink":copy(location.href.split("#")[0]+"#join="+S.invite,b,$("#inviteOut"));break;
     case"copyReply":copy(S.reply,b,$("#replyOut"));break;
   }});
-document.addEventListener("input",e=>{if(e.target.id==="nameIn"){S.name=e.target.value.slice(0,24);store("bs1.name",S.name);push()}});
+document.addEventListener("input",e=>{if(e.target.id==="nameIn"){S.name=e.target.value.slice(0,24);store("bs1.name",S.name);
+  if(S.err===NAME_ERR&&S.name.trim()){S.err="";e.target.removeAttribute("aria-invalid");const el=$("#conn .err");if(el)el.remove();
+    connKey=[S.mode,S.conn,S.role,S.err,S.pending&&S.pending.code,S.oppOnline,S.link,S.code,!!S.saved,S.invite.length,S.reply.length,S.conn==="live"||S.conn==="room"?oppName():""].join("|")}
+  push()}});
+document.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target.id==="nameIn"){const b=$('#conn [data-act="pendingJoin"],#conn [data-act="roomNew"]');if(b)b.click()}});
 document.addEventListener("keydown",e=>{
   if(e.key==="Enter"&&e.target.id==="codeIn")$('[data-act="roomJoin"]').click();
   if((e.key==="r"||e.key==="R")&&!/INPUT|TEXTAREA/.test(e.target.tagName))rotate()});
@@ -714,15 +729,16 @@ render();
       const g=load("bs1.game");if(g&&g.code&&g.role)S.saved=g;
       const h=location.hash.match(/^#([a-z0-9]{5})$/i);
       render();
-      if(h){const code=h[1].toLowerCase();
-        if(g&&g.code===code)enterRoom(g.role,code,g);else enterRoom("guest",code)}
+      if(h){const code=h[1].toLowerCase(),p=g&&g.code===code?{code,role:g.role,restore:g}:{code,role:"guest",restore:null};
+        if(S.name.trim())enterRoom(p.role,p.code,p.restore);else{S.pending=p;render();const f=$("#nameIn");if(f)f.focus()}}
       return}
     S.mode=window.RTCPeerConnection?"rtc":"none";render();
   }else{
     S.mode=window.RTCPeerConnection?"rtc":"none";
     const m=location.hash.match(/^#join=(BS1[jz][A-Za-z0-9_-]+)$/);
     render();
-    if(m&&S.mode==="rtc"){history.replaceState(null,"",location.pathname+location.search);S.role="guest";newGame(true);S.inviteIn=m[1];makeReply()}
+    if(m&&S.mode==="rtc"){history.replaceState(null,"",location.pathname+location.search);S.role="guest";newGame(true);S.inviteIn=m[1];
+      if(S.name.trim())makeReply();else{S.conn="join";render()}}
   }
 })();
 </script>
